@@ -1,2 +1,3 @@
 import "./index.css";
-import "./src/type-set.js";
+import "./src/index.js";
+import "./src/app.js";

@@ -5,11 +5,38 @@
  * powered by opentype.js.
  */
 
-import opentype from 'opentype.js';
+import opentype from './opentype-wrapper.js';
+const parseFont = opentype.parse;
 
 const fontRegistry = new Map();
 const cssFontCache = new Set();
 const customFontFaceCache = new Set();
+
+let fontBaseUrl = '';
+
+export function setFontBase(base) {
+  fontBaseUrl = base.endsWith('/') ? base : base + '/';
+}
+
+export function getFontBase() {
+  return fontBaseUrl;
+}
+
+function resolveFontUrl(url) {
+  if (!url) return url;
+  if (typeof url !== 'string') return url;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('/') || url.startsWith('data:')) {
+    return url;
+  }
+  if (fontBaseUrl && url.startsWith(fontBaseUrl)) return url;
+  return fontBaseUrl + url;
+}
+
+export function registerFont(family, weight, style, font) {
+  const key = `${family}:${weight}:${style}`;
+  fontRegistry.set(key, font);
+  return font;
+}
 
 const LIGATURE_SEQUENCES = ['ffi', 'ffl', 'fi', 'fl', 'ff'];
 
@@ -32,19 +59,23 @@ function findLigatureGlyph(font, seq) {
 }
 
 export async function loadFont(family, weight, style, url, force = false) {
+  const resolvedUrl = resolveFontUrl(url);
   const key = `${family}:${weight}:${style}`;
   if (!force && fontRegistry.has(key)) {
     return fontRegistry.get(key);
   }
 
-  const response = await fetch(url);
+  const response = await fetch(resolvedUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to load font ${resolvedUrl}: ${response.status} ${response.statusText}`);
+  }
   const buffer = await response.arrayBuffer();
-  const font = opentype.parse(buffer);
+  const font = parseFont(buffer);
   fontRegistry.set(key, font);
 
-  const cssKey = `${key}:${url}`;
-  if (!cssFontCache.has(cssKey)) {
-    const face = new FontFace(family, `url(${url})`, { weight, style });
+  const cssKey = `${key}:${resolvedUrl}`;
+  if (typeof document !== 'undefined' && !cssFontCache.has(cssKey)) {
+    const face = new FontFace(family, `url(${resolvedUrl})`, { weight, style });
     await face.load();
     document.fonts.add(face);
     cssFontCache.add(cssKey);
@@ -54,16 +85,20 @@ export async function loadFont(family, weight, style, url, force = false) {
 }
 
 export async function loadCustomFont(family, url) {
-  const cacheKey = `${family}:${url}`;
+  const resolvedUrl = resolveFontUrl(url);
+  const cacheKey = `${family}:${resolvedUrl}`;
 
   // Return early if this exact family+url combo was already loaded
   if (customFontFaceCache.has(cacheKey)) {
     return fontRegistry.get(`${family}:400:normal`);
   }
 
-  const response = await fetch(url);
+  const response = await fetch(resolvedUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to load custom font ${resolvedUrl}: ${response.status} ${response.statusText}`);
+  }
   const buffer = await response.arrayBuffer();
-  const font = opentype.parse(buffer);
+  const font = parseFont(buffer);
 
   // Register for all common weight/style combos so the fallback chain finds it
   const weights = [100, 200, 300, 400, 500, 600, 700, 800, 900];
@@ -75,10 +110,36 @@ export async function loadCustomFont(family, url) {
     }
   }
 
-  const face = new FontFace(family, `url(${url})`);
-  await face.load();
-  document.fonts.add(face);
+  if (typeof document !== 'undefined') {
+    const face = new FontFace(family, `url(${resolvedUrl})`);
+    await face.load();
+    document.fonts.add(face);
+  }
   customFontFaceCache.add(cacheKey);
+
+  return font;
+}
+
+export async function loadFontFromBuffer(family, weight, style, buffer, registerCss = true) {
+  const key = `${family}:${weight}:${style}`;
+  const font = parseFont(buffer);
+  fontRegistry.set(key, font);
+
+  if (registerCss && typeof document !== 'undefined') {
+    const cssKey = `${key}:buffer`;
+    if (!cssFontCache.has(cssKey)) {
+      const blob = new Blob([buffer], { type: 'font/woff2' });
+      const url = URL.createObjectURL(blob);
+      try {
+        const face = new FontFace(family, `url(${url})`, { weight, style });
+        await face.load();
+        document.fonts.add(face);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      cssFontCache.add(cssKey);
+    }
+  }
 
   return font;
 }
@@ -112,6 +173,7 @@ export function shapeText(text, font, fontSize, useLigatures = true) {
               advanceWidth: (lig.advanceWidth || font.unitsPerEm) * scale,
               leftBearing: (lig.leftSideBearing || 0) * scale,
               path: lig.path,
+              unitsPerEm: font.unitsPerEm,
               spacingOffset: 0,
               kerningOverride: 0,
               charIndex: i,
@@ -135,6 +197,7 @@ export function shapeText(text, font, fontSize, useLigatures = true) {
         advanceWidth: (glyph.advanceWidth || font.unitsPerEm) * scale,
         leftBearing: (glyph.leftSideBearing || 0) * scale,
         path: glyph.path,
+        unitsPerEm: font.unitsPerEm,
         spacingOffset: 0,
         kerningOverride: 0,
         charIndex: i,
@@ -452,16 +515,16 @@ export function exportGlyphSVG(glyphs, fontSize, color, width, height) {
   const paths = [];
 
   for (const g of glyphs) {
-    if (!g.path) continue;
-    const scale = fontSize / g.path.unitsPerEm;
+    if (!g.path || g.char === '\n') continue;
+    const scale = fontSize / (g.unitsPerEm || g.path.unitsPerEm || 1000);
     const cmds = g.path.commands.map((cmd) => {
       const s = { type: cmd.type };
       if ('x' in cmd) s.x = cmd.x * scale + g.x;
-      if ('y' in cmd) s.y = cmd.y * scale + g.y;
+      if ('y' in cmd) s.y = g.y - cmd.y * scale;
       if ('x1' in cmd) s.x1 = cmd.x1 * scale + g.x;
-      if ('y1' in cmd) s.y1 = cmd.y1 * scale + g.y;
+      if ('y1' in cmd) s.y1 = g.y - cmd.y1 * scale;
       if ('x2' in cmd) s.x2 = cmd.x2 * scale + g.x;
-      if ('y2' in cmd) s.y2 = cmd.y2 * scale + g.y;
+      if ('y2' in cmd) s.y2 = g.y - cmd.y2 * scale;
       return s;
     });
 

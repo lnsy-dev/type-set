@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>type-set e2e fixture</title>
+  <style>
+    :root {
+      --background-color: #ffffff;
+      --foreground-color: #000000;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+    type-set {
+      display: block;
+      background: #ffffff !important;
+      border-color: transparent !important;
+      padding: 0 !important;
+      max-width: none !important;
+    }
+    #svg-host {
+      position: absolute;
+      left: 0;
+      top: 0;
+      visibility: hidden;
+      background: #ffffff;
+      line-height: 0;
+    }
+  </style>
+</head>
+<body>
+  <type-set id="editor"></type-set>
+  <div id="svg-host"></div>
+
+  <script type="module" src="/main.min.js"></script>
+  <script type="module">
+    window.typeSetReady = customElements.whenDefined('type-set').then(() => {
+      window.editor = document.getElementById('editor');
+    });
+  </script>
+</body>
+</html>

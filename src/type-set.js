@@ -2,20 +2,18 @@
  * TypeSet Custom HTML Element
  *
  * Canvas-based typography editor with per-glyph control via opentype.js.
+ * Built on top of the headless TypeSetRenderer so the same engine can be
+ * reused by consumers such as super-collage.
  */
 
-import DataroomElement from 'dataroom-js';
+import { TypeSetRenderer } from './type-renderer.js';
+import { getFont, loadFont, loadCustomFont } from './type-engine.js';
 import {
-  loadFont,
-  loadCustomFont,
-  getFont,
-  shapeText,
-  applyKerning,
-  layoutGlyphs,
-  hitTest,
-  exportGlyphSVG,
-} from './type-engine.js';
-import { buildHyphenMap } from './hyphenate.js';
+  FONT_WEIGHTS,
+  hasItalic,
+  snapWeight,
+  getFontUrl,
+} from './font-data.js';
 
 const DEFAULTS = {
   'font-family': 'IBM Plex Serif',
@@ -28,115 +26,59 @@ const DEFAULTS = {
   'text-align': 'left',
 };
 
-const FONT_FILES = {
-  'IBM Plex Serif': {
-    100: { normal: 'ibm-plex-serif-latin-100-normal.woff', italic: 'ibm-plex-serif-latin-100-italic.woff' },
-    200: { normal: 'ibm-plex-serif-latin-200-normal.woff', italic: 'ibm-plex-serif-latin-200-italic.woff' },
-    300: { normal: 'ibm-plex-serif-latin-300-normal.woff', italic: 'ibm-plex-serif-latin-300-italic.woff' },
-    400: { normal: 'ibm-plex-serif-latin-400-normal.woff', italic: 'ibm-plex-serif-latin-400-italic.woff' },
-    500: { normal: 'ibm-plex-serif-latin-500-normal.woff', italic: 'ibm-plex-serif-latin-500-italic.woff' },
-    600: { normal: 'ibm-plex-serif-latin-600-normal.woff', italic: 'ibm-plex-serif-latin-600-italic.woff' },
-    700: { normal: 'ibm-plex-serif-latin-700-normal.woff', italic: 'ibm-plex-serif-latin-700-italic.woff' },
-  },
-  'IBM Plex Sans': {
-    100: { normal: 'ibm-plex-sans-latin-100-normal.woff', italic: 'ibm-plex-sans-latin-100-italic.woff' },
-    200: { normal: 'ibm-plex-sans-latin-200-normal.woff', italic: 'ibm-plex-sans-latin-200-italic.woff' },
-    300: { normal: 'ibm-plex-sans-latin-300-normal.woff', italic: 'ibm-plex-sans-latin-300-italic.woff' },
-    400: { normal: 'ibm-plex-sans-latin-400-normal.woff', italic: 'ibm-plex-sans-latin-400-italic.woff' },
-    500: { normal: 'ibm-plex-sans-latin-500-normal.woff', italic: 'ibm-plex-sans-latin-500-italic.woff' },
-    600: { normal: 'ibm-plex-sans-latin-600-normal.woff', italic: 'ibm-plex-sans-latin-600-italic.woff' },
-    700: { normal: 'ibm-plex-sans-latin-700-normal.woff', italic: 'ibm-plex-sans-latin-700-italic.woff' },
-  },
-  'Crimson Text': {
-    400: { normal: 'crimson-text-latin-400-normal.woff', italic: 'crimson-text-latin-400-italic.woff' },
-    600: { normal: 'crimson-text-latin-600-normal.woff', italic: 'crimson-text-latin-600-italic.woff' },
-    700: { normal: 'crimson-text-latin-700-normal.woff', italic: 'crimson-text-latin-700-italic.woff' },
-  },
-  'Fira Code': {
-    300: { normal: 'fira-code-latin-300-normal.woff' },
-    400: { normal: 'fira-code-latin-400-normal.woff' },
-    500: { normal: 'fira-code-latin-500-normal.woff' },
-    600: { normal: 'fira-code-latin-600-normal.woff' },
-    700: { normal: 'fira-code-latin-700-normal.woff' },
-  },
-  'League Gothic': {
-    400: { normal: 'league-gothic-latin-400-normal.woff' },
-  },
-  'Atkinson Hyperlegible': {
-    400: { normal: 'atkinson-hyperlegible-latin-400-normal.woff', italic: 'atkinson-hyperlegible-latin-400-italic.woff' },
-    700: { normal: 'atkinson-hyperlegible-latin-700-normal.woff', italic: 'atkinson-hyperlegible-latin-700-italic.woff' },
-  },
-  'Cormorant Garamond': {
-    300: { normal: 'cormorant-garamond-latin-300-normal.woff', italic: 'cormorant-garamond-latin-300-italic.woff' },
-    400: { normal: 'cormorant-garamond-latin-400-normal.woff', italic: 'cormorant-garamond-latin-400-italic.woff' },
-    500: { normal: 'cormorant-garamond-latin-500-normal.woff', italic: 'cormorant-garamond-latin-500-italic.woff' },
-    600: { normal: 'cormorant-garamond-latin-600-normal.woff', italic: 'cormorant-garamond-latin-600-italic.woff' },
-    700: { normal: 'cormorant-garamond-latin-700-normal.woff', italic: 'cormorant-garamond-latin-700-italic.woff' },
-  },
-  'EB Garamond': {
-    400: { normal: 'eb-garamond-latin-400-normal.woff', italic: 'eb-garamond-latin-400-italic.woff' },
-    500: { normal: 'eb-garamond-latin-500-normal.woff', italic: 'eb-garamond-latin-500-italic.woff' },
-    600: { normal: 'eb-garamond-latin-600-normal.woff', italic: 'eb-garamond-latin-600-italic.woff' },
-    700: { normal: 'eb-garamond-latin-700-normal.woff', italic: 'eb-garamond-latin-700-italic.woff' },
-    800: { normal: 'eb-garamond-latin-800-normal.woff', italic: 'eb-garamond-latin-800-italic.woff' },
-  },
-  'Spectral': {
-    200: { normal: 'spectral-latin-200-normal.woff', italic: 'spectral-latin-200-italic.woff' },
-    300: { normal: 'spectral-latin-300-normal.woff', italic: 'spectral-latin-300-italic.woff' },
-    400: { normal: 'spectral-latin-400-normal.woff', italic: 'spectral-latin-400-italic.woff' },
-    500: { normal: 'spectral-latin-500-normal.woff', italic: 'spectral-latin-500-italic.woff' },
-    600: { normal: 'spectral-latin-600-normal.woff', italic: 'spectral-latin-600-italic.woff' },
-    700: { normal: 'spectral-latin-700-normal.woff', italic: 'spectral-latin-700-italic.woff' },
-    800: { normal: 'spectral-latin-800-normal.woff', italic: 'spectral-latin-800-italic.woff' },
-  },
-  'UnifrakturMaguntia': {
-    400: { normal: 'unifrakturmaguntia-latin-400-normal.woff' },
-  },
-};
-
-export const FONT_WEIGHTS = {
-  'IBM Plex Serif': [100, 200, 300, 400, 500, 600, 700],
-  'IBM Plex Sans': [100, 200, 300, 400, 500, 600, 700],
-  'Crimson Text': [400, 600, 700],
-  'Fira Code': [300, 400, 500, 600, 700],
-  'League Gothic': [400],
-  'Atkinson Hyperlegible': [400, 700],
-  'Cormorant Garamond': [300, 400, 500, 600, 700],
-  'EB Garamond': [400, 500, 600, 700, 800],
-  'Spectral': [200, 300, 400, 500, 600, 700, 800],
-  'UnifrakturMaguntia': [400],
-};
-
-export function hasItalic(family) {
-  const map = FONT_FILES[family];
-  if (!map) return false;
-  const first = Object.values(map)[0];
-  return !!first.italic;
+function _getWeightSpecificFontsHash(element) {
+  const parts = [];
+  const weights = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+  for (const w of weights) {
+    const normal = element.getAttribute(`font-${w}`);
+    const italic = element.getAttribute(`font-${w}-italic`);
+    if (normal) parts.push(`${w}:n:${normal}`);
+    if (italic) parts.push(`${w}:i:${italic}`);
+  }
+  return parts.join('|');
 }
 
-export function snapWeight(family, weight) {
-  const available = FONT_WEIGHTS[family];
-  if (!available) return weight;
-  const num = typeof weight === 'string' ? parseInt(weight, 10) : weight;
-  return available.reduce((prev, curr) =>
-    Math.abs(curr - num) < Math.abs(prev - num) ? curr : prev
-  );
+function _buildWeightSpecificFontsMap(element) {
+  const map = {};
+  const weights = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+  for (const w of weights) {
+    const normal = element.getAttribute(`font-${w}`);
+    const italic = element.getAttribute(`font-${w}-italic`);
+    if (normal || italic) {
+      map[w] = {};
+      if (normal) map[w].normal = normal;
+      if (italic) map[w].italic = italic;
+    }
+  }
+  return map;
 }
 
-function getFontUrl(family, weight, style, base = './fonts/') {
-  const map = FONT_FILES[family];
-  if (!map) return null;
-  const weightMap = map[weight];
-  if (!weightMap) return null;
-  const path = weightMap[style] || weightMap.normal || null;
-  if (!path) return null;
-  // Ensure base ends with /
-  const prefix = base.endsWith('/') ? base : base + '/';
-  return prefix + path;
-}
+export class TypeSetElement extends HTMLElement {
+  static get observedAttributes() {
+    return [
+      'font-family',
+      'font-size',
+      'font-weight',
+      'font-style',
+      'letter-spacing',
+      'line-height',
+      'color',
+      'text-align',
+      'font-base',
+      'font',
+      ...[100, 200, 300, 400, 500, 600, 700, 800, 900].flatMap(w => [`font-${w}`, `font-${w}-italic`]),
+    ];
+  }
 
-class TypeSet extends DataroomElement {
-  async initialize() {
+  constructor() {
+    super();
+    this.renderer = new TypeSetRenderer();
+  }
+
+  connectedCallback() {
+    if (this._initialized) return;
+    this._initialized = true;
+
     this.innerHTML = '';
 
     this.canvas = document.createElement('canvas');
@@ -176,6 +118,8 @@ class TypeSet extends DataroomElement {
     this.blinkOn = true;
     this.blinkInterval = null;
     this.isDragging = false;
+    this.effectiveFontSize = null; // set by _shapeAndLayout when box is rescaled
+    this._scaleBase = null;       // baseline {maxWidth, fontSize} for proportional scaling
     this._mouseDownCount = 0;
     this._lastMouseDownTime = 0;
 
@@ -190,88 +134,66 @@ class TypeSet extends DataroomElement {
     this.textarea.addEventListener('focus', () => this.classList.add('has-focus'));
     this.textarea.addEventListener('blur', () => this.classList.remove('has-focus'));
 
-    this.on('NODE-CHANGED', () => this._onAttrChange());
-
     this._resizeObserver = new ResizeObserver(() => {
       if (this._resizeTimeout) clearTimeout(this._resizeTimeout);
       this._resizeTimeout = setTimeout(() => this._shapeAndLayout(), 50);
     });
     this._resizeObserver.observe(this);
 
-    await this._loadFonts();
-    this._startBlink();
+    this._syncRendererFromAttributes();
+    this._loadFonts().then(() => this._startBlink());
+  }
+
+  disconnectedCallback() {
+    if (this._resizeObserver) this._resizeObserver.disconnect();
+    if (this.blinkInterval) clearInterval(this.blinkInterval);
+  }
+
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (!this._initialized) return;
+    if (oldValue === newValue) return;
+    // Explicit font-size changes re-baseline the proportional scaling.
+    if (name === 'font-size') this._scaleBase = null;
+    this._onAttrChange();
   }
 
   _getFontBase() {
-    return this.getAttribute('font-base') || './fonts/';
+    return this.getAttribute('font-base') || '';
   }
 
-  _getWeightSpecificFontsHash() {
-    const parts = [];
-    const weights = [100, 200, 300, 400, 500, 600, 700, 800, 900];
-    for (const w of weights) {
-      const normal = this.getAttribute(`font-${w}`);
-      const italic = this.getAttribute(`font-${w}-italic`);
-      if (normal) parts.push(`${w}:n:${normal}`);
-      if (italic) parts.push(`${w}:i:${italic}`);
-    }
-    return parts.join('|');
+  _syncRendererFromAttributes() {
+    const family = this.getAttribute('font-family') || DEFAULTS['font-family'];
+    const weight = snapWeight(family, this.getAttribute('font-weight') || DEFAULTS['font-weight']);
+
+    this.renderer.setFontBase(this._getFontBase());
+    this.renderer.fontFamily = family;
+    this.renderer.fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+    this.renderer.fontWeight = String(weight);
+    this.renderer.fontStyle = this.getAttribute('font-style') || DEFAULTS['font-style'];
+    this.renderer.letterSpacing = parseFloat(this.getAttribute('letter-spacing') || DEFAULTS['letter-spacing']);
+    this.renderer.lineHeight = parseFloat(this.getAttribute('line-height') || DEFAULTS['line-height']);
+    this.renderer.color = this.getAttribute('color') || DEFAULTS['color'];
+    this.renderer.textAlign = this.getAttribute('text-align') || DEFAULTS['text-align'];
+    this.renderer.text = this._text;
+    this.renderer.perCharSpacing = this.perCharSpacing;
+    this.renderer.perCharWeight = this.perCharWeight;
+    this.renderer.perCharItalic = this.perCharItalic;
+    this.renderer.useLigatures = this.useLigatures;
+    this.renderer.useKerning = this.useKerning;
+    this.renderer.useHyphenation = this.useHyphenation;
+    this.renderer.customFontUrl = this.getAttribute('font');
+    this.renderer.weightSpecificFonts = _buildWeightSpecificFontsMap(this);
+
+    this.currentFamily = family;
+    this.currentWeight = String(weight);
+    this.globalWeight = String(weight);
+    this.globalLetterSpacing = this.renderer.letterSpacing;
+    this.lineHeightMultiplier = this.renderer.lineHeight;
+    this.textAlign = this.renderer.textAlign;
   }
 
   async _loadFonts() {
-    const family = this.currentFamily;
-    const base = this._getFontBase();
-    const customFontUrl = this.getAttribute('font');
-
-    // Collect all distinct weights used in the text
-    const weights = new Set([this.globalWeight]);
-    for (let i = 0; i < this._text.length; i++) {
-      const w = this.perCharWeight[i];
-      if (w) weights.add(String(w));
-    }
-
-    // Check if any weight-specific custom fonts are defined
-    let hasWeightSpecific = false;
-    for (const weight of weights) {
-      if (this.getAttribute(`font-${weight}`) || this.getAttribute(`font-${weight}-italic`)) {
-        hasWeightSpecific = true;
-        break;
-      }
-    }
-
-    // Fast path: single custom font with no weight-specific overrides
-    if (customFontUrl && !hasWeightSpecific) {
-      this._prevCustomFont = customFontUrl;
-      await loadCustomFont(family, customFontUrl);
-      this._shapeAndLayout();
-      return;
-    }
-
-    // If a catch-all custom font is set alongside weight-specific ones,
-    // load it first as the fallback for unspecified weights.
-    if (customFontUrl) {
-      await loadCustomFont(family, customFontUrl);
-    }
-
-    for (const weight of weights) {
-      const customNormal = this.getAttribute(`font-${weight}`);
-      const customItalic = this.getAttribute(`font-${weight}-italic`);
-
-      if (customNormal) {
-        await loadFont(family, weight, 'normal', customNormal, true);
-      } else if (!customFontUrl) {
-        const normalUrl = getFontUrl(family, weight, 'normal', base);
-        if (normalUrl) await loadFont(family, weight, 'normal', normalUrl);
-      }
-
-      if (customItalic) {
-        await loadFont(family, weight, 'italic', customItalic, true);
-      } else if (!customFontUrl) {
-        const italicUrl = getFontUrl(family, weight, 'italic', base);
-        if (italicUrl) await loadFont(family, weight, 'italic', italicUrl);
-      }
-    }
-
+    await this.renderer.loadFonts();
     this._shapeAndLayout();
   }
 
@@ -288,8 +210,11 @@ class TypeSet extends DataroomElement {
     const newWeight = new Float64Array(value.length);
     newWeight.set(this.perCharWeight.subarray(0, Math.min(this.perCharWeight.length, value.length)));
     this.perCharWeight = newWeight;
-    // Clear per-character styles on full text replacement; typing preserves them via _onTextInput
     this.perCharItalic = new Set();
+    this.renderer.text = value;
+    this.renderer.perCharSpacing = this.perCharSpacing;
+    this.renderer.perCharWeight = this.perCharWeight;
+    this.renderer.perCharItalic = this.perCharItalic;
     this._shapeAndLayout();
     this.event('typeset-change', { text: value });
   }
@@ -300,9 +225,8 @@ class TypeSet extends DataroomElement {
     const spacing = parseFloat(this.getAttribute('letter-spacing') || DEFAULTS['letter-spacing']);
     const lineHeight = parseFloat(this.getAttribute('line-height') || DEFAULTS['line-height']);
     const textAlign = this.getAttribute('text-align') || DEFAULTS['text-align'];
-    const fontBase = this.getAttribute('font-base') || './fonts/';
     const customFont = this.getAttribute('font');
-    const weightSpecificHash = this._getWeightSpecificFontsHash();
+    const weightSpecificHash = _getWeightSpecificFontsHash(this);
 
     this.globalLetterSpacing = spacing;
     this.lineHeightMultiplier = lineHeight;
@@ -318,79 +242,41 @@ class TypeSet extends DataroomElement {
     this.currentWeight = snappedWeight;
     this.globalWeight = snappedWeight;
 
+    this._syncRendererFromAttributes();
+
     if (customFontChanged || familyChanged || weightChanged || weightSpecificChanged) {
+      this._prevCustomFont = customFont;
+      this._prevWeightSpecificHash = weightSpecificHash;
       this._loadFonts();
     } else {
       this._shapeAndLayout();
     }
   }
 
-  _shapeAndLayout() {
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
-    const lineHeightPx = fontSize * this.lineHeightMultiplier;
-    const family = this.currentFamily;
-
-    // Build style runs based on per-character weight + italic
-    const runs = [];
-    let currentRun = null;
-
-    for (let i = 0; i < this._text.length; i++) {
-      const char = this._text[i];
-      const weight = String(this.perCharWeight[i] || this.globalWeight);
-      const style = this.perCharItalic.has(i) ? 'italic' : 'normal';
-
-      if (!currentRun || currentRun.weight !== weight || currentRun.style !== style) {
-        currentRun = { start: i, weight, style, text: '' };
-        runs.push(currentRun);
-      }
-      currentRun.text += char;
-      currentRun.end = i + 1;
-    }
-
-    // Shape each run with its corresponding font
-    this.glyphs = [];
-    for (const run of runs) {
-      const font = getFont(family, run.weight, run.style)
-        || getFont(family, run.weight, 'normal')
-        || getFont(family, this.globalWeight, run.style)
-        || getFont(family, this.globalWeight, 'normal');
-      if (!font) continue;
-
-      const runGlyphs = shapeText(run.text, font, fontSize, this.useLigatures);
-
-      // Offset char indices to global positions and attach style info
-      for (const g of runGlyphs) {
-        g.charIndex += run.start;
-        g.fontFamily = family;
-        g.fontWeight = run.weight;
-        g.fontStyle = run.style;
-      }
-
-      // Apply kerning within run
-      if (this.useKerning) {
-        applyKerning(runGlyphs, font, fontSize);
-      }
-
-      this.glyphs.push(...runGlyphs);
-    }
-
-    // Apply spacing: global + per-char
-    for (const g of this.glyphs) {
-      const extra = this.perCharSpacing[g.charIndex] || 0;
-      g.spacingOffset = this.globalLetterSpacing + extra;
-    }
+  async _shapeAndLayout() {
+    this._syncRendererFromAttributes();
 
     const style = getComputedStyle(this);
     const paddingLeft = parseFloat(style.paddingLeft) || 0;
     const paddingRight = parseFloat(style.paddingRight) || 0;
     const maxWidth = Math.max((this.clientWidth || 800) - paddingLeft - paddingRight, 1);
-    const hyphenMap = this.useHyphenation ? buildHyphenMap(this._text) : null;
-    this.totalHeight = layoutGlyphs(this.glyphs, maxWidth, lineHeightPx, {
-      textAlign: this.textAlign,
-      hyphenMap,
-      text: this._text,
-      fontSize,
-    });
+
+    // Proportional scaling: once a width/font-size baseline is established,
+    // resizing the element scales the text instead of just re-wrapping it.
+    if (!this._scaleBase && this.clientWidth > 0) {
+      this._scaleBase = {
+        maxWidth,
+        fontSize: parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']),
+      };
+    }
+    if (this._scaleBase) {
+      this.effectiveFontSize = Math.max(this._scaleBase.fontSize * (maxWidth / this._scaleBase.maxWidth), 1);
+      this.renderer.fontSize = this.effectiveFontSize;
+    }
+
+    const { glyphs, totalHeight } = await this.renderer.shapeAndLayout(maxWidth);
+    this.glyphs = glyphs;
+    this.totalHeight = totalHeight;
     this._render();
   }
 
@@ -418,7 +304,7 @@ class TypeSet extends DataroomElement {
 
     if (this.glyphs.length === 0) return;
 
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+    const fontSize = this._fontSizePx();
     const color = this.getAttribute('color') || DEFAULTS['color'];
 
     this._drawSelection(ctx);
@@ -442,11 +328,17 @@ class TypeSet extends DataroomElement {
     }
   }
 
+  _fontSizePx() {
+    return this.effectiveFontSize != null
+      ? this.effectiveFontSize
+      : parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+  }
+
   _drawSelection(ctx) {
     if (this.selectionStart === this.selectionEnd) return;
     const selStart = Math.min(this.selectionStart, this.selectionEnd);
     const selEnd = Math.max(this.selectionStart, this.selectionEnd);
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+    const fontSize = this._fontSizePx();
     const lineHeightPx = fontSize * this.lineHeightMultiplier;
 
     ctx.fillStyle = 'rgba(10, 92, 10, 0.2)';
@@ -462,7 +354,7 @@ class TypeSet extends DataroomElement {
 
   _drawCursor(ctx) {
     const idx = this.cursorIndex;
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+    const fontSize = this._fontSizePx();
     const lineHeightPx = fontSize * this.lineHeightMultiplier;
 
     let x = 0;
@@ -503,12 +395,73 @@ class TypeSet extends DataroomElement {
     }, 530);
   }
 
+  _startDragMove(e) {
+    e.preventDefault();
+
+    const rect = this.getBoundingClientRect();
+
+    // Switch to absolute positioning (pinned exactly where it currently is)
+    // so the element can move freely within its container.
+    if (getComputedStyle(this).position === 'static') {
+      this.style.position = 'absolute';
+      this.style.margin = '0';
+      this.style.maxWidth = 'none';
+      this.style.width = rect.width + 'px';
+      const parent = this.offsetParent || document.body;
+      const parentRect = parent.getBoundingClientRect();
+      const pcs = getComputedStyle(parent);
+      const borderLeft = parseFloat(pcs.borderLeftWidth) || 0;
+      const borderTop = parseFloat(pcs.borderTopWidth) || 0;
+      // Absolute offsets are relative to the containing block's padding box.
+      this.style.left = (rect.left - parentRect.left - borderLeft) + 'px';
+      this.style.top = (rect.top - parentRect.top - borderTop) + 'px';
+    }
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origLeft = parseFloat(this.style.left) || 0;
+    const origTop = parseFloat(this.style.top) || 0;
+
+    const onMove = (ev) => {
+      this.style.left = (origLeft + ev.clientX - startX) + 'px';
+      this.style.top = (origTop + ev.clientY - startY) + 'px';
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      this.event('typeset-move', {
+        left: this.offsetLeft,
+        top: this.offsetTop,
+      });
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  // Keep the hidden textarea's internal selection in sync with the visual
+  // canvas selection so native editing keys (Backspace/Delete/etc.) operate
+  // on exactly what the user sees highlighted.
+  _syncTextareaSelection() {
+    const start = Math.min(this.selectionStart, this.selectionEnd);
+    const end = Math.max(this.selectionStart, this.selectionEnd);
+    this.textarea.selectionStart = start;
+    this.textarea.selectionEnd = end;
+  }
+
   _getCanvasCoords(e) {
     const rect = this.canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
   _onMouseDown(e) {
+    // Alt/Option + drag moves the whole element instead of editing text.
+    if (e.altKey) {
+      this._startDragMove(e);
+      return;
+    }
+
     const now = Date.now();
     if (now - this._lastMouseDownTime < 400) {
       this._mouseDownCount++;
@@ -524,31 +477,36 @@ class TypeSet extends DataroomElement {
     }
 
     if (this._mouseDownCount === 2) {
-      // Let dblclick handle word selection; don't reset cursor here
       return;
     }
 
     this.isDragging = true;
     const { x, y } = this._getCanvasCoords(e);
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+    const fontSize = this._fontSizePx();
     const lineHeightPx = fontSize * this.lineHeightMultiplier;
 
-    this.cursorIndex = hitTest(this.glyphs, x, y, lineHeightPx);
+    this.cursorIndex = this._hitTest(x, y, lineHeightPx);
     this.selectionStart = this.cursorIndex;
     this.selectionEnd = this.cursorIndex;
+    this._syncTextareaSelection();
     this.blinkOn = true;
     this._render();
     this.textarea.focus();
   }
 
   _onMouseMove(e) {
-    if (!this.isDragging) return;
+    if (!this.isDragging) {
+      // Hint that Alt+drag moves the element.
+      this.canvas.style.cursor = e.altKey ? 'move' : 'text';
+      return;
+    }
     const { x, y } = this._getCanvasCoords(e);
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+    const fontSize = this._fontSizePx();
     const lineHeightPx = fontSize * this.lineHeightMultiplier;
 
-    this.selectionEnd = hitTest(this.glyphs, x, y, lineHeightPx);
+    this.selectionEnd = this._hitTest(x, y, lineHeightPx);
     this.cursorIndex = this.selectionEnd;
+    this._syncTextareaSelection();
     this._render();
   }
 
@@ -558,11 +516,10 @@ class TypeSet extends DataroomElement {
 
   _onDoubleClick(e) {
     const { x, y } = this._getCanvasCoords(e);
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+    const fontSize = this._fontSizePx();
     const lineHeightPx = fontSize * this.lineHeightMultiplier;
-    const idx = hitTest(this.glyphs, x, y, lineHeightPx);
+    const idx = this._hitTest(x, y, lineHeightPx);
 
-    // Select the word at the cursor
     const text = this._text;
     let wordStart = idx;
     let wordEnd = idx;
@@ -600,7 +557,6 @@ class TypeSet extends DataroomElement {
     const newText = this.textarea.value;
 
     if (newText !== oldText) {
-      // Find the changed region
       let start = 0;
       while (start < oldText.length && start < newText.length && oldText[start] === newText[start]) {
         start++;
@@ -616,7 +572,6 @@ class TypeSet extends DataroomElement {
       const oldLen = oldEnd - start;
       const newLen = newEnd - start;
 
-      // Adjust perCharItalic indices
       const newSet = new Set();
       for (const idx of this.perCharItalic) {
         if (idx < start) {
@@ -624,11 +579,9 @@ class TypeSet extends DataroomElement {
         } else if (idx >= oldEnd) {
           newSet.add(idx - oldLen + newLen);
         }
-        // indices in [start, oldEnd) are deleted or replaced; don't carry over
       }
       this.perCharItalic = newSet;
 
-      // Adjust perCharSpacing
       const newSpacing = new Float64Array(newText.length);
       for (let i = 0; i < start; i++) newSpacing[i] = this.perCharSpacing[i] || 0;
       for (let i = oldEnd; i < oldText.length; i++) {
@@ -639,7 +592,6 @@ class TypeSet extends DataroomElement {
       }
       this.perCharSpacing = newSpacing;
 
-      // Adjust perCharWeight
       const newWeight = new Float64Array(newText.length);
       for (let i = 0; i < start; i++) newWeight[i] = this.perCharWeight[i] || 0;
       for (let i = oldEnd; i < oldText.length; i++) {
@@ -651,6 +603,10 @@ class TypeSet extends DataroomElement {
       this.perCharWeight = newWeight;
 
       this._text = newText;
+      this.renderer.text = newText;
+      this.renderer.perCharSpacing = this.perCharSpacing;
+      this.renderer.perCharWeight = this.perCharWeight;
+      this.renderer.perCharItalic = this.perCharItalic;
       this.cursorIndex = this.textarea.selectionStart;
       this.selectionStart = this.cursorIndex;
       this.selectionEnd = this.cursorIndex;
@@ -668,6 +624,7 @@ class TypeSet extends DataroomElement {
     if (e.key === 'Escape') {
       this.selectionStart = this.cursorIndex;
       this.selectionEnd = this.cursorIndex;
+      this._syncTextareaSelection();
       this._render();
     }
   }
@@ -695,12 +652,13 @@ class TypeSet extends DataroomElement {
       this.selectionStart = newIndex;
       this.selectionEnd = newIndex;
     }
+    this._syncTextareaSelection();
     this.blinkOn = true;
     this._render();
   }
 
   _findIndexOnAdjacentLine(x, y, down) {
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
+    const fontSize = this._fontSizePx();
     const lineHeightPx = fontSize * this.lineHeightMultiplier;
     const targetY = down ? y + lineHeightPx : y - lineHeightPx;
 
@@ -718,6 +676,45 @@ class TypeSet extends DataroomElement {
     }
 
     return closest;
+  }
+
+  _hitTest(clickX, clickY, lineHeightPx) {
+    if (this.glyphs.length === 0) return 0;
+
+    const firstLineY = this.glyphs[0].y;
+
+    if (clickY < firstLineY - lineHeightPx / 2) {
+      return 0;
+    }
+
+    const targetLine = Math.max(0, Math.round((clickY - firstLineY) / lineHeightPx));
+
+    const lineGlyphs = this.glyphs.filter(g =>
+      Math.abs(g.y - (firstLineY + targetLine * lineHeightPx)) < lineHeightPx / 2
+    );
+
+    if (lineGlyphs.length === 0) {
+      const last = this.glyphs[this.glyphs.length - 1];
+      return last.charIndex + (last.charCount ?? 1);
+    }
+
+    let closest = lineGlyphs[0];
+    let minDist = Infinity;
+
+    for (const g of lineGlyphs) {
+      const centerX = g.x + (g.advanceWidth + g.spacingOffset) / 2;
+      const dist = Math.abs(clickX - centerX);
+      if (dist < minDist) {
+        minDist = dist;
+        closest = g;
+      }
+    }
+
+    const centerX = closest.x + (closest.advanceWidth + closest.spacingOffset) / 2;
+    if (clickX < centerX) {
+      return closest.charIndex;
+    }
+    return closest.charIndex + (closest.charCount ?? 1);
   }
 
   get hasSelection() {
@@ -741,7 +738,9 @@ class TypeSet extends DataroomElement {
     } else {
       this.globalLetterSpacing = num;
       this.setAttribute('letter-spacing', String(num));
+      this.perCharSpacing = new Float64Array(this._text.length);
     }
+    this.renderer.perCharSpacing = this.perCharSpacing;
     this._shapeAndLayout();
   }
 
@@ -755,6 +754,7 @@ class TypeSet extends DataroomElement {
       this.setAttribute('letter-spacing', '0');
       this.perCharSpacing = new Float64Array(this._text.length);
     }
+    this.renderer.perCharSpacing = this.perCharSpacing;
     this._shapeAndLayout();
   }
 
@@ -776,6 +776,7 @@ class TypeSet extends DataroomElement {
       for (let i = start; i < end; i++) this.perCharItalic.add(i);
     }
 
+    this.renderer.perCharItalic = this.perCharItalic;
     this._shapeAndLayout();
   }
 
@@ -810,6 +811,7 @@ class TypeSet extends DataroomElement {
       for (let i = this.selStart; i < this.selEnd && i < this._text.length; i++) {
         this.perCharWeight[i] = weight;
       }
+      this.renderer.perCharWeight = this.perCharWeight;
       this._shapeAndLayout();
     } else {
       this.globalWeight = String(weight);
@@ -822,6 +824,7 @@ class TypeSet extends DataroomElement {
       for (let i = this.selStart; i < this.selEnd && i < this._text.length; i++) {
         this.perCharWeight[i] = 0;
       }
+      this.renderer.perCharWeight = this.perCharWeight;
       this._shapeAndLayout();
     } else {
       this.globalWeight = DEFAULTS['font-weight'];
@@ -831,78 +834,48 @@ class TypeSet extends DataroomElement {
 
   setLigatures(enabled) {
     this.useLigatures = enabled;
+    this.renderer.useLigatures = enabled;
     this._shapeAndLayout();
   }
 
   setKerning(enabled) {
     this.useKerning = enabled;
+    this.renderer.useKerning = enabled;
     this._shapeAndLayout();
   }
 
   setHyphenation(enabled) {
     this.useHyphenation = enabled;
+    this.renderer.useHyphenation = enabled;
     this._shapeAndLayout();
   }
 
   async exportSVG() {
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
-    const color = this.getAttribute('color') || DEFAULTS['color'];
+    this._syncRendererFromAttributes();
+    if (this.effectiveFontSize != null) this.renderer.fontSize = this.effectiveFontSize;
     const width = this.clientWidth || 800;
-    const height = this.totalHeight + 20;
-    return exportGlyphSVG(this.glyphs, fontSize, color, width, height);
+    return this.renderer.renderToSVG({ width });
   }
 
   async exportPNG(dpi = 600) {
-    const scale = dpi / 96;
-    const cssWidth = this.clientWidth || 800;
-    const cssHeight = this.totalHeight + 20;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(cssWidth * scale);
-    canvas.height = Math.ceil(cssHeight * scale);
-
-    const ctx = canvas.getContext('2d');
-    ctx.scale(scale, scale);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, cssWidth, cssHeight);
-
-    const fontSize = parseFloat(this.getAttribute('font-size') || DEFAULTS['font-size']);
-    const color = this.getAttribute('color') || DEFAULTS['color'];
-
-    ctx.fillStyle = color;
-    ctx.textBaseline = 'alphabetic';
-
-    let currentFont = null;
-    for (const g of this.glyphs) {
-      if (g.char === '\n') continue;
-      const fontStr = `${g.fontStyle} ${g.fontWeight} ${fontSize}px "${g.fontFamily}"`;
-      if (fontStr !== currentFont) {
-        ctx.font = fontStr;
-        currentFont = fontStr;
-      }
-      ctx.fillText(g.char, g.x, g.y);
-    }
-
-    return new Promise((resolve) => {
-      canvas.toBlob((blob) => resolve(blob), 'image/png');
-    });
+    this._syncRendererFromAttributes();
+    if (this.effectiveFontSize != null) this.renderer.fontSize = this.effectiveFontSize;
+    const width = this.clientWidth || 800;
+    return this.renderer.renderToPNG({ width, dpi });
   }
 
   async downloadSVG(filename = 'typeset.svg') {
     const svg = await this.exportSVG();
     const blob = new Blob([svg], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    this._downloadBlob(blob, filename);
   }
 
   async downloadPNG(filename = 'typeset.png', dpi = 600) {
     const blob = await this.exportPNG(dpi);
+    this._downloadBlob(blob, filename);
+  }
+
+  _downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -912,13 +885,17 @@ class TypeSet extends DataroomElement {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
+
+  event(name, detail) {
+    this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true }));
+  }
 }
 
-// Expose font data for UI
-window.TYPESET_FONTS = { FONT_WEIGHTS, hasItalic, snapWeight };
+// Expose font data for UI consumers
+export { FONT_WEIGHTS, hasItalic, snapWeight };
 
-if (!customElements.get('type-set')) {
-  customElements.define('type-set', TypeSet);
+if (typeof window !== 'undefined' && !customElements.get('type-set')) {
+  customElements.define('type-set', TypeSetElement);
 }
 
-export default TypeSet;
+export default TypeSetElement;
